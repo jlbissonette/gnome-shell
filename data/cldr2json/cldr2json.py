@@ -43,6 +43,7 @@ LOCALE_TO_XKB_OVERRIDES = {
     'hi':    'in+bolnagri',
     'ky':    'kg',
     'nl-BE': 'be',
+    'id':    'id',
     'zu':    None
 }
 
@@ -79,7 +80,7 @@ def parse_rows(keymap):
                        reverse=True):
         row = []
         for key in sorted(v, key=lambda x: x):
-            row.append(key[1])
+            row.append({ 'strings': key[1] })
         rows.append(row)
 
     return rows
