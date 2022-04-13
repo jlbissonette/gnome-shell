@@ -97,6 +97,28 @@ const _modes = {
             right: ['screenRecording', 'dwellClick', 'a11y', 'keyboard', 'aggregateMenu'],
         },
     },
+
+    'osk-preview': {
+        hasOverview: false,
+        showCalendarEvents: false,
+        showWelcomeDialog: false,
+        allowSettings: false,
+        allowScreencast: false,
+        hasRunDialog: false,
+        hasWorkspaces: true,
+        hasWindows: true,
+        hasWmMenus: false,
+        hasNotifications: false,
+        isLocked: false,
+        isPrimary: true,
+        unlockDialog: null,
+        components: [],
+        panel: {
+            left: [],
+            center: [],
+            right: ['keyboard'],
+        },
+    },
 };
 
 function _loadMode(file, info) {

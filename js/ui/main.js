@@ -329,6 +329,14 @@ function _initializeUI() {
             let module = eval(`imports.perf.${perfModuleName};`);
             Scripting.runPerfScript(module, perfOutput);
         }
+
+        if (sessionMode.currentMode === 'osk-preview') {
+            let entry = new St.Entry();
+            global.stage.add_child(entry);
+            entry.set_width(global.screen_width / 2);
+            entry.set_position(global.screen_width / 4, global.screen_height / 4);
+            entry.grab_key_focus();
+        }
     });
 }
 

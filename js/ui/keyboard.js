@@ -1218,7 +1218,8 @@ var KeyboardManager = class KeyBoardManager {
     }
 
     _syncEnabled() {
-        let enableKeyboard = this._a11yApplicationsSettings.get_boolean(SHOW_KEYBOARD);
+        let enableKeyboard = Main.sessionMode.currentMode === 'osk-preview' ||
+            this._a11yApplicationsSettings.get_boolean(SHOW_KEYBOARD);
         let autoEnabled = this._seat.get_touch_mode() && this._lastDeviceIsTouchscreen();
         let enabled = enableKeyboard || autoEnabled;
 
