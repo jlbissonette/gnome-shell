@@ -534,6 +534,13 @@ var Key = GObject.registerClass({
 
 var KeyboardModel = class {
     constructor(groupName) {
+        const testFile = GLib.getenv('GNOME_SHELL_TEST_OSK_FILE');
+        if (testFile !== null) {
+            const file = Gio.File.new_for_path(testFile);
+            this._model = this._loadModelFile(file);
+            return;
+        }
+
         let names = [groupName];
         if (groupName.includes('+'))
             names.push(groupName.replace(/\+.*/, ''));
@@ -548,13 +555,16 @@ var KeyboardModel = class {
         }
     }
 
+    _loadModelFile(file) {
+        let [success_, contents] = file.load_contents(null);
+        const decoder = new TextDecoder();
+        return JSON.parse(decoder.decode(contents));
+    }
+
     _loadModel(groupName) {
         const file = Gio.File.new_for_uri(
             `resource:///org/gnome/shell/osk-layouts/${groupName}.json`);
-        let [success_, contents] = file.load_contents(null);
-
-        const decoder = new TextDecoder();
-        return JSON.parse(decoder.decode(contents));
+        return this._loadModelFile(file);
     }
 
     getLevels() {
