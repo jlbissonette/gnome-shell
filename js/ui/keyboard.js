@@ -290,7 +290,6 @@ var LanguageSelectionPopup = class extends PopupMenu.PopupMenu {
 
 var Key = GObject.registerClass({
     Signals: {
-        'activated': {},
         'long-press': {},
         'pressed': {},
         'released': {},
@@ -354,8 +353,6 @@ var Key = GObject.registerClass({
     }
 
     _press(button) {
-        this.emit('activated');
-
         if (button === this.keyButton) {
             this._pressTimeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT,
                 KEY_LONG_PRESS_TIME,
@@ -913,7 +910,7 @@ var EmojiPager = GObject.registerClass({
 
             key.keyButton.set_button_mask(0);
 
-            key.connect('activated', () => {
+            key.connect('pressed', () => {
                 this._currentKey = key;
             });
             key.connect('long-press', () => {
