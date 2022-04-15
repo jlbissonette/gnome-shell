@@ -1500,21 +1500,21 @@ var Keyboard = GObject.registerClass({
                 if (!this._latched)
                     this._setActiveLayer(0);
             });
-            button.connect('pressed', () => {
-                if (key.action === 'levelSwitch') {
+            button.connect('released', () => {
+                if (key.action === 'hide') {
+                    this.close();
+                } else if (key.action === 'languageMenu') {
+                    this._popupLanguageMenu(button);
+                } else if (key.action === 'emoji') {
+                    this._toggleEmoji();
+                } else if (!this._longPressed && key.action === 'levelSwitch') {
                     this._setActiveLayer(key.level);
-                    this._setLatched (
+                    this._setLatched(
                         key.level === 1 &&
                         key.iconName === 'keyboard-caps-lock-symbolic');
                 }
-            });
-            button.connect('released', () => {
-                if (key.action === 'hide')
-                    this.close();
-                else if (key.action === 'languageMenu')
-                    this._popupLanguageMenu(button);
-                else if (key.action === 'emoji')
-                    this._toggleEmoji();
+
+                this._longPressed = null;
             });
 
             if (key.action === 'levelSwitch' &&
@@ -1522,7 +1522,9 @@ var Keyboard = GObject.registerClass({
                 layout.shiftKeys.push(button);
                 if (key.level === 1) {
                     button.connect('long-press', () => {
+                        this._setActiveLayer(key.level);
                         this._setLatched(true);
+                        this._longPressed = true;
                     });
                 }
             }
