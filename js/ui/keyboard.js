@@ -485,15 +485,15 @@ var Key = GObject.registerClass({
     }
 
     setLatched(latched) {
-        if (!this._icon)
-            return;
-
-        if (latched) {
+        if (latched)
             this.keyButton.add_style_pseudo_class('latched');
-            this._icon.icon_name = 'keyboard-caps-lock-symbolic';
-        } else {
+        else
             this.keyButton.remove_style_pseudo_class('latched');
-            this._icon.icon_name = 'keyboard-shift-symbolic';
+
+        /* Shift keys have icons */
+        if (this._icon) {
+            this._icon.icon_name = latched
+                ? 'keyboard-caps-lock-symbolic' : 'keyboard-shift-symbolic';
         }
     }
 });
@@ -1280,6 +1280,8 @@ var Keyboard = GObject.registerClass({
         this._focusWindowStartY = null;
 
         this._latched = false; // current level is latched
+        this._modifiers = [];
+        this._modifierKeys = {};
 
         this._suggestions = null;
         this._emojiKeyVisible = Meta.is_wayland_compositor();
@@ -1489,11 +1491,19 @@ var Keyboard = GObject.registerClass({
                 button.setWidth(key.width);
 
             button.connect('commit', (actor, keyval, str) => {
+                /* These are emitted later on */
+                if (key.action === 'modifier')
+                    return;
+
                 if (str === '' || !Main.inputMethod.currentFocus ||
+                    this._modifiers.length > 0 ||
                     !this._keyboardController.commitString(str, true)) {
                     if (keyval != 0) {
+                        this._forwardModifiers(this._modifiers, true);
                         this._keyboardController.keyvalPress(keyval);
                         this._keyboardController.keyvalRelease(keyval);
+                        this._forwardModifiers(this._modifiers, false);
+                        this._disableAllModifiers();
                     }
                 }
 
@@ -1507,6 +1517,8 @@ var Keyboard = GObject.registerClass({
                     this._popupLanguageMenu(button);
                 } else if (key.action === 'emoji') {
                     this._toggleEmoji();
+                } else if (key.action === 'modifier') {
+                    this._toggleModifier(key.keyval);
                 } else if (!this._longPressed && key.action === 'levelSwitch') {
                     this._setActiveLayer(key.level);
                     this._setLatched(
@@ -1529,6 +1541,12 @@ var Keyboard = GObject.registerClass({
                 }
             }
 
+            if (key.action === 'modifier') {
+                let modifierKeys = this._modifierKeys[key.keyval] || [];
+                modifierKeys.push(button);
+                this._modifierKeys[key.keyval] = modifierKeys;
+            }
+
             if (key.action || key.keyval)
                 button.keyButton.add_style_class_name('default-key');
 
@@ -1539,6 +1557,37 @@ var Keyboard = GObject.registerClass({
     _setLatched(latched) {
         this._latched = latched;
         this._setCurrentLevelLatched(this._currentPage, this._latched);
+    }
+
+    _setModifierEnabled(keyval, enabled) {
+        const idx = this._modifiers.indexOf(keyval);
+        if (enabled &&  idx === -1)
+            this._modifiers.push(keyval);
+        else if (!enabled)
+            this._modifiers.splice(idx, 1);
+
+        for (const key of this._modifierKeys[keyval])
+            key.setLatched(enabled);
+    }
+
+    _toggleModifier(keyval) {
+        const isActive = this._modifiers.indexOf(keyval) !== -1;
+        this._setModifierEnabled(keyval, !isActive);
+    }
+
+    _forwardModifiers(modifiers, press) {
+        for (const keyval of modifiers) {
+            if (press)
+                this._keyboardController.keyvalPress(keyval);
+            else
+                this._keyboardController.keyvalRelease(keyval);
+        }
+    }
+
+    _disableAllModifiers() {
+        const modifiers = this._modifiers;
+        for (const keyval of modifiers)
+            this._setModifierEnabled(keyval, false);
     }
 
     _popupLanguageMenu(keyActor) {
@@ -1685,6 +1734,7 @@ var Keyboard = GObject.registerClass({
             delete this._currentPage._destroyID;
         }
 
+        this._disableAllModifiers();
         this._currentPage = currentPage;
         this._currentPage._destroyID = this._currentPage.connect('destroy', () => {
             this._currentPage = null;
@@ -1765,6 +1815,7 @@ var Keyboard = GObject.registerClass({
 
         this._animateHide();
         this.setCursorLocation(null);
+        this._disableAllModifiers();
     }
 
     _animateShow() {
