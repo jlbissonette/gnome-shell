@@ -295,4 +295,8 @@ var InputMethod = GObject.registerClass({
     getSurroundingText() {
         return [this._surroundingText, this._surroundingTextCursor];
     }
+
+    hasPreedit() {
+        return this._preeditStr !== '';
+    }
 });
