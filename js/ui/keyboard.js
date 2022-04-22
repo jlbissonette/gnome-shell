@@ -1404,6 +1404,9 @@ var Keyboard = GObject.registerClass({
         // keyboard on RTL locales.
         this.text_direction = Clutter.TextDirection.LTR;
 
+        Main.inputMethod.connect(
+            'terminal-mode-changed', this._onTerminalModeChanged.bind(this));
+
         this._keyboardController.connectObject(
             'active-group', this._onGroupChanged.bind(this),
             'groups-changed', this._onKeyboardGroupsChanged.bind(this),
@@ -1774,9 +1777,19 @@ var Keyboard = GObject.registerClass({
         }
     }
 
-    _onGroupChanged() {
-        this._ensureKeysForGroup(this._keyboardController.getCurrentGroup());
+    _updateKeys() {
+        this._ensureKeysForGroup(Main.inputMethod.terminalMode
+            ? 'us-extended'
+            : this._keyboardController.getCurrentGroup());
         this._setActiveLayer(0);
+    }
+
+    _onGroupChanged() {
+        this._updateKeys();
+    }
+
+    _onTerminalModeChanged() {
+        this._updateKeys();
     }
 
     _onKeyboardGroupsChanged() {

@@ -12,6 +12,7 @@ var HIDE_PANEL_TIME = 50;
 var InputMethod = GObject.registerClass({
     Signals: {
         'surrounding-text-updated': {},
+        'terminal-mode-changed': {},
     },
 }, class InputMethod extends Clutter.InputMethod {
     _init() {
@@ -23,6 +24,7 @@ var InputMethod = GObject.registerClass({
         this._preeditPos = 0;
         this._preeditVisible = false;
         this._hidePanelId = 0;
+        this.terminalMode = false;
         this._ibus = IBus.Bus.new_async();
         this._ibus.connect('connected', this._onConnected.bind(this));
         this._ibus.connect('disconnected', this._clear.bind(this));
@@ -254,6 +256,13 @@ var InputMethod = GObject.registerClass({
             ibusPurpose = IBus.InputPurpose.NAME;
         else if (purpose == Clutter.InputContentPurpose.PASSWORD)
             ibusPurpose = IBus.InputPurpose.PASSWORD;
+
+        const terminalMode =
+            purpose === Clutter.InputContentPurpose.TERMINAL;
+        if (this.terminalMode !== terminalMode) {
+            this.terminalMode = terminalMode;
+            this.emit('terminal-mode-changed');
+        }
 
         this._purpose = ibusPurpose;
         if (this._context)
