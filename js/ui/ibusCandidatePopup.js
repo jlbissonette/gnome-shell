@@ -295,6 +295,7 @@ class IbusCandidatePopup extends BoxPointer.BoxPointer {
             this._updateVisibility();
         });
         panelService.connect('hide-lookup-table', () => {
+            Main.keyboard.resetSuggestions();
             this._candidateArea.hide();
             this._updateVisibility();
         });
