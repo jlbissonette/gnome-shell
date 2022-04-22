@@ -299,4 +299,11 @@ var InputMethod = GObject.registerClass({
     hasPreedit() {
         return this._preeditStr !== '';
     }
+
+    handleVirtualKey(keyval) {
+        this._context.process_key_event_async(
+            keyval, 0, 0, -1, null, null);
+        this._context.process_key_event_async(
+            keyval, 0, IBus.ModifierType.RELEASE_MASK, -1, null, null);
+    }
 });

@@ -22,6 +22,11 @@ _checkIBusVersion(1, 5, 2);
 let _ibusManager = null;
 const IBUS_SYSTEMD_SERVICE = 'org.freedesktop.IBus.session.GNOME.service';
 
+const TYPING_BOOSTER_ENGINE = 'typing-booster';
+const IBUS_TYPING_BOOSTER_SCHEMA = 'org.freedesktop.ibus.engine.typing-booster';
+const KEY_EMOJIPREDICTIONS = 'emojipredictions';
+const KEY_DICTIONARY = 'dictionary';
+
 function _checkIBusVersion(requiredMajor, requiredMinor, requiredMicro) {
     if ((IBus.MAJOR_VERSION > requiredMajor) ||
         (IBus.MAJOR_VERSION == requiredMajor && IBus.MINOR_VERSION > requiredMinor) ||
@@ -285,8 +290,11 @@ var IBusManager = class {
     }
 
     preloadEngines(ids) {
-        if (!this._ibus || ids.length == 0)
+        if (!this._ibus || !this._ready)
             return;
+
+        if (!ids.includes(TYPING_BOOSTER_ENGINE))
+            ids.push(TYPING_BOOSTER_ENGINE);
 
         if (this._preloadEnginesId != 0) {
             GLib.source_remove(this._preloadEnginesId);
@@ -306,6 +314,44 @@ var IBusManager = class {
                     this._preloadEnginesId = 0;
                     return GLib.SOURCE_REMOVE;
                 });
+    }
+
+    toggleOskCompletion(enabled) {
+        /* Needs typing-booster available */
+        if (!this._engines.has(TYPING_BOOSTER_ENGINE))
+            return false;
+        /* Can do only on xkb engines */
+        if (enabled && !this._currentEngineName.startsWith('xkb:'))
+            return false;
+        /* Avoid modifications if typing booster is already active */
+        if (enabled && this._currentEngineName === TYPING_BOOSTER_ENGINE)
+            return true;
+
+        if (this._oskCompletion === enabled)
+            return true;
+
+        this._oskCompletion = enabled;
+        let settings =
+            new Gio.Settings({ schema_id: IBUS_TYPING_BOOSTER_SCHEMA });
+
+        if (enabled) {
+            this._preOskState = {
+                'engine': this._currentEngineName,
+                'emoji': settings.get_value(KEY_EMOJIPREDICTIONS),
+                'langs': settings.get_value(KEY_DICTIONARY),
+            };
+            settings.set_boolean(KEY_EMOJIPREDICTIONS, false);
+            settings.set_string(
+                KEY_DICTIONARY, GLib.get_language_names().join(','));
+            this.setEngine(TYPING_BOOSTER_ENGINE);
+        } else if (this._preOskState) {
+            const { engine, emoji, langs } = this._preOskState;
+            this._preOskState = null;
+            this.setEngine(engine);
+            settings.set_value(KEY_EMOJIPREDICTIONS, emoji);
+            settings.set_value(KEY_DICTIONARY, langs);
+        }
+        return true;
     }
 };
 Signals.addSignalMethods(IBusManager.prototype);
