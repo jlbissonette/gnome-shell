@@ -18,6 +18,11 @@
 #include <meta/meta-plugin.h>
 #include <meta/prefs.h>
 #include <atk-bridge.h>
+#include <link.h>
+
+#ifdef HAVE_EXE_INTROSPECTION
+#include <elf.h>
+#endif
 
 #include "shell-global.h"
 #include "shell-global-private.h"
@@ -123,6 +128,74 @@ shell_dbus_init (gboolean replace)
   g_object_unref (session);
 }
 
+#ifdef HAVE_EXE_INTROSPECTION
+static void
+maybe_add_rpath_introspection_paths (void)
+{
+  ElfW (Dyn) *dyn;
+  ElfW (Dyn) *rpath = NULL;
+  ElfW (Dyn) *runpath = NULL;
+  const char *strtab = NULL;
+  g_auto (GStrv) paths = NULL;
+  g_autofree char *exe_dir = NULL;
+  GStrv str;
+
+  for (dyn = _DYNAMIC; dyn->d_tag != DT_NULL; dyn++)
+    {
+      if (dyn->d_tag == DT_RPATH)
+        rpath = dyn;
+      else if (dyn->d_tag == DT_RUNPATH)
+        runpath = dyn;
+      else if (dyn->d_tag == DT_STRTAB)
+        strtab = (const char *) dyn->d_un.d_val;
+    }
+
+  if ((!rpath && !runpath) || !strtab)
+    return;
+
+  if (rpath)
+    paths = g_strsplit (strtab + rpath->d_un.d_val, ":", -1);
+  else
+    paths = g_strsplit (strtab + runpath->d_un.d_val, ":", -1);
+
+  if (!paths)
+    return;
+
+  for (str = paths; *str; str++)
+    {
+      g_autoptr (GError) error = NULL;
+      g_autoptr (GString) rpath_dir = NULL;
+
+      if (!strstr (*str, "$ORIGIN"))
+        continue;
+
+      if (!exe_dir)
+        {
+          g_autofree char *exe_path = NULL;
+
+          exe_path = g_file_read_link ("/proc/self/exe", &error);
+          if (!exe_path)
+            {
+              g_warning ("Failed to find directory of executable: %s",
+                         error->message);
+              return;
+            }
+
+          exe_dir = g_path_get_dirname (exe_path);
+        }
+
+      rpath_dir = g_string_new (*str);
+      g_string_replace (rpath_dir, "$ORIGIN", exe_dir, 0);
+
+      g_debug ("Prepending RPATH directory '%s' "
+               "to introsepciton library search path",
+               rpath_dir->str);
+      g_irepository_prepend_search_path (rpath_dir->str);
+      g_irepository_prepend_library_path (rpath_dir->str);
+    }
+}
+#endif /* HAVE_EXE_INTROSPECTION */
+
 static void
 shell_introspection_init (void)
 {
@@ -137,6 +210,10 @@ shell_introspection_init (void)
    */
   g_irepository_prepend_library_path (MUTTER_TYPELIB_DIR);
   g_irepository_prepend_library_path (GNOME_SHELL_PKGLIBDIR);
+
+#ifdef HAVE_EXE_INTROSPECTION
+  maybe_add_rpath_introspection_paths ();
+#endif
 }
 
 static void
@@ -287,39 +364,55 @@ shell_init_debug (const char *debug_env)
                                        G_N_ELEMENTS (keys));
 }
 
-static void
-default_log_handler (const char     *log_domain,
-                     GLogLevelFlags  log_level,
-                     const char     *message,
-                     gpointer        data)
+static GLogWriterOutput
+default_log_writer (GLogLevelFlags   log_level,
+                    const GLogField *fields,
+                    gsize            n_fields,
+                    gpointer         user_data)
 {
-  if (!log_domain || !g_str_has_prefix (log_domain, "tp-glib"))
-    g_log_default_handler (log_domain, log_level, message, data);
+  GLogWriterOutput output;
+  int i;
 
-  /* Filter out Gjs logs, those already have the stack */
-  if (log_domain && strcmp (log_domain, "Gjs") == 0)
-    return;
+  output = g_log_writer_default (log_level, fields, n_fields, user_data);
 
   if ((_shell_debug & SHELL_DEBUG_BACKTRACE_WARNINGS) &&
       ((log_level & G_LOG_LEVEL_CRITICAL) ||
        (log_level & G_LOG_LEVEL_WARNING)))
-    gjs_dumpstack ();
+    {
+      const char *log_domain = NULL;
+
+      for (i = 0; i < n_fields; i++)
+        {
+          if (g_strcmp0 (fields[i].key, "GLIB_DOMAIN") == 0)
+            {
+              log_domain = fields[i].value;
+              break;
+            }
+        }
+
+      /* Filter out Gjs logs, those already have the stack */
+      if (g_strcmp0 (log_domain, "Gjs") != 0)
+        gjs_dumpstack ();
+    }
+
+  return output;
 }
 
-static void
-shut_up (const char     *domain,
-         GLogLevelFlags  level,
-         const char     *message,
-         gpointer        user_data)
+static GLogWriterOutput
+shut_up (GLogLevelFlags   log_level,
+         const GLogField *fields,
+         gsize            n_fields,
+         gpointer         user_data)
 {
+  return (GLogWriterOutput) {0};
 }
 
 static void
 dump_gjs_stack_alarm_sigaction (int signo)
 {
-  g_log_set_default_handler (g_log_default_handler, NULL);
+  g_log_set_writer_func (g_log_writer_default, NULL, NULL);
   g_warning ("Failed to dump Javascript stack, got stuck");
-  g_log_set_default_handler (default_log_handler, NULL);
+  g_log_set_writer_func (default_log_writer, NULL, NULL);
 
   raise (caught_signal);
 }
@@ -384,7 +477,7 @@ list_modes (const char  *option_name,
    * ShellGlobal has some GTK+ dependencies, so initialize GTK+; we
    * don't really care if it fails though (e.g. when running from a tty),
    * so we mute all warnings */
-  g_log_set_default_handler (shut_up, NULL);
+  g_log_set_writer_func (shut_up, NULL, NULL);
   gtk_init_check (NULL, NULL);
 
   _shell_global_init (NULL);
@@ -533,7 +626,7 @@ main (int argc, char **argv)
   shell_introspection_init ();
   shell_fonts_init ();
 
-  g_log_set_default_handler (default_log_handler, NULL);
+  g_log_set_writer_func (default_log_writer, NULL, NULL);
 
   /* Initialize the global object */
   if (session_mode == NULL)
@@ -569,13 +662,16 @@ main (int argc, char **argv)
       ecode = EXIT_FAILURE;
     }
 
-  meta_context_destroy (g_steal_pointer (&context));
-
+  g_message ("Shutting down GNOME Shell");
+  _shell_global_notify_shutdown (shell_global_get ());
   shell_profiler_shutdown ();
 
-  g_debug ("Doing final cleanup");
+  g_debug ("Tearing down the gjs context");
   _shell_global_destroy_gjs_context (shell_global_get ());
   g_object_unref (shell_global_get ());
+
+  g_debug ("Tearing down the mutter context");
+  meta_context_destroy (g_steal_pointer (&context));
 
   return ecode;
 }

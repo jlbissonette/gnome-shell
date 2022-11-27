@@ -1,5 +1,5 @@
 /* exported AccessDialogDBus */
-const { Clutter, Gio, GLib, GObject, Shell, St } = imports.gi;
+const { Clutter, Gio, GLib, GObject, Pango, Shell, St } = imports.gi;
 
 const CheckBox = imports.ui.checkBox;
 const Dialog = imports.ui.dialog;
@@ -28,7 +28,7 @@ class AccessDialog extends ModalDialog.ModalDialog {
         this._request = Gio.DBusExportedObject.wrapJSObject(RequestIface, this);
 
         for (let option in options)
-            options[option] = options[option].deep_unpack();
+            options[option] = options[option].deepUnpack();
 
         this._buildLayout(title, description, body, options);
     }
@@ -36,8 +36,8 @@ class AccessDialog extends ModalDialog.ModalDialog {
     _buildLayout(title, description, body, options) {
         // No support for non-modal system dialogs, so ignore the option
         // let modal = options['modal'] || true;
-        let denyLabel = options['deny_label'] || _("Deny Access");
-        let grantLabel = options['grant_label'] || _("Grant Access");
+        let denyLabel = options['deny_label'] || _('Deny');
+        let grantLabel = options['grant_label'] || _('Allow');
         let choices = options['choices'] || [];
 
         let content = new Dialog.MessageDialogContent({ title, description });
@@ -62,6 +62,8 @@ class AccessDialog extends ModalDialog.ModalDialog {
             text: body,
             x_align: Clutter.ActorAlign.CENTER,
         });
+        bodyLabel.clutter_text.ellipsize = Pango.EllipsizeMode.NONE;
+        bodyLabel.clutter_text.line_wrap = true;
         content.add_child(bodyLabel);
 
         this.addButton({

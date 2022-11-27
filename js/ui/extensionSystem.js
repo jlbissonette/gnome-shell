@@ -1,8 +1,8 @@
 // -*- mode: js; js-indent-level: 4; indent-tabs-mode: nil -*-
-/* exported init connect disconnect */
+/* exported init connect disconnect ExtensionManager */
 
 const { GLib, Gio, GObject, Shell, St } = imports.gi;
-const Signals = imports.signals;
+const Signals = imports.misc.signals;
 
 const ExtensionDownloader = imports.ui.extensionDownloader;
 const ExtensionUtils = imports.misc.extensionUtils;
@@ -19,8 +19,10 @@ const EXTENSION_DISABLE_VERSION_CHECK_KEY = 'disable-extension-version-validatio
 
 const UPDATE_CHECK_TIMEOUT = 24 * 60 * 60; // 1 day in seconds
 
-var ExtensionManager = class {
+var ExtensionManager = class extends Signals.EventEmitter {
     constructor() {
+        super();
+
         this._initialized = false;
         this._updateNotified = false;
 
@@ -63,7 +65,8 @@ var ExtensionManager = class {
 
     get updatesSupported() {
         const appSys = Shell.AppSystem.get_default();
-        return appSys.lookup_app('org.gnome.Extensions.desktop') !== null;
+        return (appSys.lookup_app('org.gnome.Extensions.desktop') !== null) ||
+               (appSys.lookup_app('com.mattjakeman.ExtensionManager.desktop') !== null);
     }
 
     lookup(uuid) {
@@ -373,7 +376,8 @@ var ExtensionManager = class {
             this.logExtensionError(extension.uuid, new Error(
                 'A different version was loaded previously. You need to log out for changes to take effect.'));
         } else {
-            let enabled = this._enabledExtensions.includes(extension.uuid);
+            let enabled = this._enabledExtensions.includes(extension.uuid) &&
+                          this._extensionSupportsSessionMode(extension.uuid);
             if (enabled) {
                 if (!this._callExtensionInit(extension.uuid))
                     return;
@@ -655,13 +659,14 @@ var ExtensionManager = class {
         this._enableAllExtensions();
     }
 };
-Signals.addSignalMethods(ExtensionManager.prototype);
 
 const ExtensionUpdateSource = GObject.registerClass(
 class ExtensionUpdateSource extends MessageTray.Source {
     _init() {
         let appSys = Shell.AppSystem.get_default();
         this._app = appSys.lookup_app('org.gnome.Extensions.desktop');
+        if (!this._app)
+            this._app = appSys.lookup_app('com.mattjakeman.ExtensionManager.desktop');
 
         super._init(this._app.get_name());
     }

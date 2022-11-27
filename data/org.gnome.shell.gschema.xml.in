@@ -84,14 +84,13 @@
         This key sets the default state of the checkbox.
       </description>
     </key>
-    <key name="had-bluetooth-devices-setup" type="b">
-      <default>false</default>
-      <summary>Whether the default Bluetooth adapter had set up devices associated to it</summary>
+    <key name="last-selected-power-profile" type="s">
+      <default>"power-saver"</default>
+      <summary>The last selected non-default power profile</summary>
       <description>
-        The shell will only show a Bluetooth menu item if a Bluetooth
-        adapter is powered, or if there were devices set up associated
-        with the default adapter. This will be reset if the default
-        adapter is ever seen not to have devices associated to it.
+        Some systems support more than two power profiles. In order to still support
+        toggling between two profiles, this key records the last selected non-default
+        profile.
       </description>
     </key>
     <key name="welcome-dialog-last-shown-version" type="s">
@@ -315,51 +314,6 @@
         The location for which to show a forecast
       </description>
       <default>[]</default>
-    </key>
-  </schema>
-
-  <!-- unused, change 00_org.gnome.shell.gschema.override instead -->
-  <schema id="org.gnome.shell.overrides" path="/org/gnome/shell/overrides/"
-	  gettext-domain="@GETTEXT_PACKAGE@">
-    <key name="attach-modal-dialogs" type="b">
-      <default>true</default>
-      <summary>Attach modal dialog to the parent window</summary>
-      <description>
-        This key overrides the key in org.gnome.mutter when running
-        GNOME Shell.
-      </description>
-    </key>
-
-    <key name="edge-tiling" type="b">
-      <default>true</default>
-      <summary>Enable edge tiling when dropping windows on screen edges</summary>
-      <description>
-        This key overrides the key in org.gnome.mutter when running GNOME Shell.
-      </description>
-    </key>
-
-    <key name="dynamic-workspaces" type="b">
-      <default>true</default>
-      <summary>Workspaces are managed dynamically</summary>
-      <description>
-        This key overrides the key in org.gnome.mutter when running GNOME Shell.
-      </description>
-    </key>
-
-    <key name="workspaces-only-on-primary" type="b">
-      <default>true</default>
-      <summary>Workspaces only on primary monitor</summary>
-      <description>
-        This key overrides the key in org.gnome.mutter when running GNOME Shell.
-      </description>
-    </key>
-
-    <key name="focus-change-on-pointer-rest" type="b">
-      <default>true</default>
-      <summary>Delay focus changes in mouse mode until the pointer stops moving</summary>
-      <description>
-        This key overrides the key in org.gnome.mutter when running GNOME Shell.
-      </description>
     </key>
   </schema>
 </schemalist>

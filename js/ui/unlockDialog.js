@@ -566,7 +566,7 @@ var UnlockDialog = GObject.registerClass({
             opacity: 0,
             x_align: Clutter.ActorAlign.END,
             y_align: Clutter.ActorAlign.END,
-            child: new St.Icon({ icon_name: 'system-users-symbolic' }),
+            icon_name: 'system-users-symbolic',
         });
         this._otherUserButton.set_pivot_point(0.5, 0.5);
         this._otherUserButton.connect('clicked', this._otherUserClicked.bind(this));
@@ -873,7 +873,7 @@ var UnlockDialog = GObject.registerClass({
             timestamp,
             actionMode: Shell.ActionMode.UNLOCK_SCREEN,
         };
-        let grab = Main.pushModal(this, modalParams);
+        let grab = Main.pushModal(Main.uiGroup, modalParams);
         if (grab.get_seat_state() !== Clutter.GrabState.ALL) {
             Main.popModal(grab);
             return false;

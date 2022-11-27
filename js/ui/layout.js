@@ -2,7 +2,7 @@
 /* exported MonitorConstraint, LayoutManager */
 
 const { Clutter, Gio, GLib, GObject, Meta, Shell, St } = imports.gi;
-const Signals = imports.signals;
+const Signals = imports.misc.signals;
 
 const Background = imports.ui.background;
 const BackgroundMenu = imports.ui.backgroundMenu;
@@ -221,6 +221,20 @@ var LayoutManager = GObject.registerClass({
 
         global.stage.remove_actor(global.window_group);
         this.uiGroup.add_actor(global.window_group);
+        global.connect('shutdown', () => {
+            const adoptedUiGroupActors = [
+                global.window_group,
+                global.top_window_group,
+                Meta.get_feedback_group_for_display(global.display),
+            ];
+
+            for (let adoptedActor of adoptedUiGroupActors) {
+                this.uiGroup.remove_actor(adoptedActor);
+                global.stage.add_actor(adoptedActor);
+            }
+
+            this.uiGroup.destroy();
+        });
 
         // Using addChrome() to add actors to uiGroup will position actors
         // underneath the top_window_group.
@@ -233,6 +247,10 @@ var LayoutManager = GObject.registerClass({
             name: 'overviewGroup',
             visible: false,
             reactive: true,
+            constraints: new Clutter.BindConstraint({
+                source: this.uiGroup,
+                coordinate: Clutter.BindCoordinate.ALL,
+            }),
         });
         this.addChrome(this.overviewGroup);
 
@@ -241,6 +259,10 @@ var LayoutManager = GObject.registerClass({
             visible: false,
             clip_to_allocation: true,
             layout_manager: new Clutter.BinLayout(),
+            constraints: new Clutter.BindConstraint({
+                source: this.uiGroup,
+                coordinate: Clutter.BindCoordinate.ALL,
+            }),
         });
         this.addChrome(this.screenShieldGroup);
 
@@ -521,9 +543,6 @@ var LayoutManager = GObject.registerClass({
     }
 
     _updateBoxes() {
-        this.screenShieldGroup.set_position(0, 0);
-        this.screenShieldGroup.set_size(global.screen_width, global.screen_height);
-
         if (!this.primaryMonitor)
             return;
 
@@ -689,18 +708,17 @@ var LayoutManager = GObject.registerClass({
         });
         this.addChrome(this._coverPane);
 
+        // Force an update of the regions before we scale the UI group to
+        // get the correct allocation for the struts.
+        // Do this even when we don't animate on restart, so that maximized
+        // windows restore to the right size.
+        this._updateRegions();
+
         if (Meta.is_restart()) {
-            // On restart, we don't do an animation. Force an update of the
-            // regions immediately so that maximized windows restore to the
-            // right size taking struts into account.
-            this._updateRegions();
+            // On restart, we don't do an animation.
         } else if (Main.sessionMode.isGreeter) {
             this.panelBox.translation_y = -this.panelBox.height;
         } else {
-            // We need to force an update of the regions now before we scale
-            // the UI group to get the correct allocation for the struts.
-            this._updateRegions();
-
             this.keyboardBox.hide();
 
             let monitor = this.primaryMonitor;
@@ -1263,8 +1281,10 @@ class HotCorner extends Clutter.Actor {
     }
 });
 
-var PressureBarrier = class PressureBarrier {
+var PressureBarrier = class PressureBarrier extends Signals.EventEmitter {
     constructor(threshold, timeout, actionMode) {
+        super();
+
         this._threshold = threshold;
         this._timeout = timeout;
         this._actionMode = actionMode;
@@ -1404,7 +1424,6 @@ var PressureBarrier = class PressureBarrier {
             this._trigger();
     }
 };
-Signals.addSignalMethods(PressureBarrier.prototype);
 
 var ScreenTransition = GObject.registerClass(
 class ScreenTransition extends Clutter.Actor {

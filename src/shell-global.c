@@ -120,6 +120,7 @@ enum
 {
  NOTIFY_ERROR,
  LOCATE_POINTER,
+ SHUTDOWN,
  LAST_SIGNAL
 };
 
@@ -507,6 +508,13 @@ shell_global_class_init (ShellGlobalClass *klass)
                     0,
                     NULL, NULL, NULL,
                     G_TYPE_NONE, 0);
+  shell_global_signals[SHUTDOWN] =
+      g_signal_new ("shutdown",
+                    G_TYPE_FROM_CLASS (klass),
+                    G_SIGNAL_RUN_LAST,
+                    0,
+                    NULL, NULL, NULL,
+                    G_TYPE_NONE, 0);
 
   props[PROP_SESSION_MODE] =
     g_param_spec_string ("session-mode",
@@ -822,6 +830,17 @@ shell_global_set_stage_input_region (ShellGlobal *global,
 }
 
 /**
+ * shell_global_get_context:
+ *
+ * Return value: (transfer none): The #MetaContext
+ */
+MetaContext *
+shell_global_get_context (ShellGlobal *global)
+{
+  return global->meta_context;
+}
+
+/**
  * shell_global_get_stage:
  *
  * Return value: (transfer none): The default #ClutterStage
@@ -841,6 +860,17 @@ MetaDisplay *
 shell_global_get_display (ShellGlobal  *global)
 {
   return global->meta_display;
+}
+
+/**
+ * shell_global_get_workspace_manager:
+ *
+ * Return value: (transfer none): The default #MetaWorkspaceManager
+ */
+MetaWorkspaceManager *
+shell_global_get_workspace_manager (ShellGlobal  *global)
+{
+  return global->workspace_manager;
 }
 
 /**
@@ -1000,6 +1030,7 @@ void
 _shell_global_set_plugin (ShellGlobal *global,
                           MetaPlugin  *plugin)
 {
+  MetaContext *context;
   MetaDisplay *display;
   MetaBackend *backend;
   MetaSettings *settings;
@@ -1007,13 +1038,15 @@ _shell_global_set_plugin (ShellGlobal *global,
   g_return_if_fail (SHELL_IS_GLOBAL (global));
   g_return_if_fail (global->plugin == NULL);
 
-  global->backend = meta_get_backend ();
+  display = meta_plugin_get_display (plugin);
+  context = meta_display_get_context (display);
+  backend = meta_context_get_backend (context);
   global->plugin = plugin;
   global->wm = shell_wm_new (plugin);
 
-  display = meta_plugin_get_display (plugin);
   global->meta_display = display;
   global->meta_context = meta_display_get_context (display);
+  global->backend = meta_context_get_backend (context);
   global->workspace_manager = meta_display_get_workspace_manager (display);
 
   global->stage = CLUTTER_STAGE (meta_get_stage_for_display (display));
@@ -1065,7 +1098,7 @@ _shell_global_set_plugin (ShellGlobal *global,
     g_signal_connect_object (global->meta_display, "x11-display-closing",
                              G_CALLBACK (on_x11_display_closed), global, 0);
 
-  backend = meta_get_backend ();
+  backend = meta_context_get_backend (shell_global_get_context (global));
   settings = meta_backend_get_settings (backend);
   g_signal_connect (settings, "ui-scaling-factor-changed",
                     G_CALLBACK (ui_scaling_factor_changed), global);
@@ -1258,7 +1291,7 @@ shell_global_reexec_self (ShellGlobal *global)
    */
   pre_exec_close_fds ();
 
-  g_object_get (global, "context", &meta_context, NULL);
+  meta_context = shell_global_get_context (global);
   meta_context_restore_rlimit_nofile (meta_context, NULL);
 
   meta_display_close (shell_global_get_display (global),
@@ -1397,6 +1430,11 @@ shell_global_app_launched_cb (GAppLaunchContext *context,
   const gchar *app_name;
 
   if (!g_variant_lookup (platform_data, "pid", "i", &pid))
+    return;
+
+  /* If pid == 0 the application was launched through D-Bus
+   * activation, therefore it's already in its own unit */
+  if (pid == 0)
     return;
 
   app_name = g_app_info_get_id (info);
@@ -1841,4 +1879,10 @@ void
 _shell_global_locate_pointer (ShellGlobal *global)
 {
   g_signal_emit (global, shell_global_signals[LOCATE_POINTER], 0);
+}
+
+void
+_shell_global_notify_shutdown (ShellGlobal *global)
+{
+  g_signal_emit (global, shell_global_signals[SHUTDOWN], 0);
 }

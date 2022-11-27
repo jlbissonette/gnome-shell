@@ -45,19 +45,37 @@ class ControlsManagerLayout extends Clutter.BoxLayout {
         this._postAllocationCallbacks = [];
 
         stateAdjustment.connect('notify::value', () => this.layout_changed());
+
+        this._workAreaBox = new Clutter.ActorBox();
+        global.display.connectObject(
+            'workareas-changed', () => this._updateWorkAreaBox(),
+            this);
+        this._updateWorkAreaBox();
     }
 
-    _computeWorkspacesBoxForState(state, box, workAreaBox, searchHeight, dashHeight, thumbnailsHeight) {
+    _updateWorkAreaBox() {
+        const monitor = Main.layoutManager.primaryMonitor;
+        if (!monitor)
+            return;
+
+        const workArea = Main.layoutManager.getWorkAreaForMonitor(monitor.index);
+        const startX = workArea.x - monitor.x;
+        const startY = workArea.y - monitor.y;
+        this._workAreaBox.set_origin(startX, startY);
+        this._workAreaBox.set_size(workArea.width, workArea.height);
+    }
+
+    _computeWorkspacesBoxForState(state, box, searchHeight, dashHeight, thumbnailsHeight) {
         const workspaceBox = box.copy();
         const [width, height] = workspaceBox.get_size();
-        const { y1: startY } = workAreaBox;
-        const { spacing } = this;
-        const { expandFraction } = this._workspacesThumbnails;
+        const {y1: startY} = this._workAreaBox;
+        const {spacing} = this;
+        const {expandFraction} = this._workspacesThumbnails;
 
         switch (state) {
         case ControlsState.HIDDEN:
-            workspaceBox.set_origin(...workAreaBox.get_origin());
-            workspaceBox.set_size(...workAreaBox.get_size());
+            workspaceBox.set_origin(...this._workAreaBox.get_origin());
+            workspaceBox.set_size(...this._workAreaBox.get_size());
             break;
         case ControlsState.WINDOW_PICKER:
             workspaceBox.set_origin(0,
@@ -80,11 +98,11 @@ class ControlsManagerLayout extends Clutter.BoxLayout {
         return workspaceBox;
     }
 
-    _getAppDisplayBoxForState(state, box, workAreaBox, searchHeight, dashHeight, appGridBox) {
+    _getAppDisplayBoxForState(state, box, searchHeight, dashHeight, appGridBox) {
         const [width, height] = box.get_size();
-        const { y1: startY } = workAreaBox;
+        const {y1: startY} = this._workAreaBox;
         const appDisplayBox = new Clutter.ActorBox();
-        const { spacing } = this;
+        const {spacing} = this;
 
         switch (state) {
         case ControlsState.HIDDEN:
@@ -135,13 +153,7 @@ class ControlsManagerLayout extends Clutter.BoxLayout {
 
         const { spacing } = this;
 
-        const monitor = Main.layoutManager.findMonitorForActor(this._container);
-        const workArea = Main.layoutManager.getWorkAreaForMonitor(monitor.index);
-        const startX = workArea.x - monitor.x;
-        const startY = workArea.y - monitor.y;
-        const workAreaBox = new Clutter.ActorBox();
-        workAreaBox.set_origin(startX, startY);
-        workAreaBox.set_size(workArea.width, workArea.height);
+        const startY = this._workAreaBox.y1;
         box.y1 += startY;
         const [width, height] = box.get_size();
         let availableHeight = height;
@@ -181,7 +193,7 @@ class ControlsManagerLayout extends Clutter.BoxLayout {
         }
 
         // Workspaces
-        let params = [box, workAreaBox, searchHeight, dashHeight, thumbnailsHeight];
+        let params = [box, searchHeight, dashHeight, thumbnailsHeight];
         const transitionParams = this._stateAdjustment.getStateTransitionParams();
 
         // Update cached boxes
@@ -206,7 +218,7 @@ class ControlsManagerLayout extends Clutter.BoxLayout {
             const workspaceAppGridBox =
                 this._cachedWorkspaceBoxes.get(ControlsState.APP_GRID);
 
-            params = [box, workAreaBox, searchHeight, dashHeight, workspaceAppGridBox];
+            params = [box, searchHeight, dashHeight, workspaceAppGridBox];
             let appDisplayBox;
             if (!transitionParams.transitioning) {
                 appDisplayBox =
@@ -703,11 +715,17 @@ class ControlsManager extends St.Widget {
         this._workspacesDisplay.hide();
     }
 
-    animateToOverview(state, callback) {
-        this._ignoreShowAppsButtonToggle = true;
-
+    prepareToEnterOverview() {
         this._searchController.prepareToEnterOverview();
         this._workspacesDisplay.prepareToEnterOverview();
+    }
+
+    prepareToLeaveOverview() {
+        this._workspacesDisplay.prepareToLeaveOverview();
+    }
+
+    animateToOverview(state, callback) {
+        this._ignoreShowAppsButtonToggle = true;
 
         this._stateAdjustment.value = ControlsState.HIDDEN;
         this._stateAdjustment.ease(state, {
@@ -727,8 +745,6 @@ class ControlsManager extends St.Widget {
 
     animateFromOverview(callback) {
         this._ignoreShowAppsButtonToggle = true;
-
-        this._workspacesDisplay.prepareToLeaveOverview();
 
         this._stateAdjustment.ease(ControlsState.HIDDEN, {
             duration: Overview.ANIMATION_TIME,
@@ -763,8 +779,7 @@ class ControlsManager extends St.Widget {
         this._stateAdjustment.remove_transition('value');
 
         tracker.confirmSwipe(baseDistance, points, progress, cancelProgress);
-        this._workspacesDisplay.prepareToEnterOverview();
-        this._searchController.prepareToEnterOverview();
+        this.prepareToEnterOverview();
         this._stateAdjustment.gestureInProgress = true;
     }
 
@@ -774,7 +789,7 @@ class ControlsManager extends St.Widget {
 
     gestureEnd(target, duration, onComplete) {
         if (target === ControlsState.HIDDEN)
-            this._workspacesDisplay.prepareToLeaveOverview();
+            this.prepareToLeaveOverview();
 
         this.dash.showAppsButton.checked =
             target === ControlsState.APP_GRID;
@@ -792,8 +807,7 @@ class ControlsManager extends St.Widget {
     async runStartupAnimation(callback) {
         this._ignoreShowAppsButtonToggle = true;
 
-        this._searchController.prepareToEnterOverview();
-        this._workspacesDisplay.prepareToEnterOverview();
+        this.prepareToEnterOverview();
 
         this._stateAdjustment.value = ControlsState.HIDDEN;
         this._stateAdjustment.ease(ControlsState.WINDOW_PICKER, {

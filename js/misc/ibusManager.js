@@ -2,7 +2,7 @@
 /* exported getIBusManager */
 
 const { Gio, GLib, IBus, Meta, Shell } = imports.gi;
-const Signals = imports.signals;
+const Signals = imports.misc.signals;
 
 const IBusCandidatePopup = imports.ui.ibusCandidatePopup;
 
@@ -22,6 +22,13 @@ _checkIBusVersion(1, 5, 2);
 let _ibusManager = null;
 const IBUS_SYSTEMD_SERVICE = 'org.freedesktop.IBus.session.GNOME.service';
 
+const TYPING_BOOSTER_ENGINE = 'typing-booster';
+const IBUS_TYPING_BOOSTER_SCHEMA = 'org.freedesktop.ibus.engine.typing-booster';
+const KEY_EMOJIPREDICTIONS = 'emojipredictions';
+const KEY_DICTIONARY = 'dictionary';
+const KEY_INLINECOMPLETION = 'inlinecompletion';
+const KEY_INPUTMETHOD = 'inputmethod';
+
 function _checkIBusVersion(requiredMajor, requiredMinor, requiredMicro) {
     if ((IBus.MAJOR_VERSION > requiredMajor) ||
         (IBus.MAJOR_VERSION == requiredMajor && IBus.MINOR_VERSION > requiredMinor) ||
@@ -40,8 +47,10 @@ function getIBusManager() {
     return _ibusManager;
 }
 
-var IBusManager = class {
+var IBusManager = class extends Signals.EventEmitter {
     constructor() {
+        super();
+
         IBus.init();
 
         // This is the longest we'll keep the keyboard frozen until an input
@@ -90,24 +99,41 @@ var IBusManager = class {
             this._spawn(Meta.is_wayland_compositor() ? [] : ['--xim']);
     }
 
+    _tryAppendEnv(env, varname) {
+        const value = GLib.getenv(varname);
+        if (value)
+            env.push(`${varname}=${value}`);
+    }
+
     _spawn(extraArgs = []) {
         try {
             let cmdLine = ['ibus-daemon', '--panel', 'disable', ...extraArgs];
-            // Forward the right X11 Display for ibus-x11
-            let display = GLib.getenv('GNOME_SETUP_DISPLAY');
             let env = [];
 
-            if (display)
-                env.push('DISPLAY=%s'.format(display));
-            GLib.spawn_async(
+            this._tryAppendEnv(env, 'DBUS_SESSION_BUS_ADDRESS');
+            this._tryAppendEnv(env, 'WAYLAND_DISPLAY');
+            this._tryAppendEnv(env, 'HOME');
+            this._tryAppendEnv(env, 'LANG');
+            this._tryAppendEnv(env, 'LC_CTYPE');
+            this._tryAppendEnv(env, 'COMPOSE_FILE');
+            this._tryAppendEnv(env, 'DISPLAY');
+
+            // Use DO_NOT_REAP_CHILD to avoid adouble-fork internally
+            // since ibus-daemon refuses to start with init as its parent.
+            const [success_, pid] = GLib.spawn_async(
                 null, cmdLine, env,
-                GLib.SpawnFlags.SEARCH_PATH,
+                GLib.SpawnFlags.SEARCH_PATH | GLib.SpawnFlags.DO_NOT_REAP_CHILD,
                 () => {
                     try {
                         global.context.restore_rlimit_nofile();
                     } catch (err) {
                     }
                 }
+            );
+            GLib.child_watch_add(
+                GLib.PRIORITY_DEFAULT,
+                pid,
+                () => GLib.spawn_close_pid(pid)
             );
         } catch (e) {
             log(`Failed to launch ibus-daemon: ${e.message}`);
@@ -262,7 +288,7 @@ var IBusManager = class {
         return this._engines.get(id);
     }
 
-    async setEngine(id, callback) {
+    async _setEngine(id, callback) {
         // Send id even if id == this._currentEngineName
         // because 'properties-registered' signal can be emitted
         // while this._ibusSources == null on a lock screen.
@@ -280,13 +306,31 @@ var IBusManager = class {
             if (!e.matches(Gio.IOErrorEnum, Gio.IOErrorEnum.CANCELLED))
                 logError(e);
         }
+
         if (callback)
             callback();
     }
 
-    preloadEngines(ids) {
-        if (!this._ibus || ids.length == 0)
+    async setEngine(id, callback) {
+        if (this._preOskState)
+            this._preOskState.engine = id;
+
+        const isXkb = id.startsWith('xkb:');
+        if (this._oskCompletion && isXkb)
             return;
+
+        if (this._oskCompletion)
+            this.setCompletionEnabled(false, callback);
+        else
+            await this._setEngine(id, callback);
+    }
+
+    preloadEngines(ids) {
+        if (!this._ibus || !this._ready)
+            return;
+
+        if (!ids.includes(TYPING_BOOSTER_ENGINE))
+            ids.push(TYPING_BOOSTER_ENGINE);
 
         if (this._preloadEnginesId != 0) {
             GLib.source_remove(this._preloadEnginesId);
@@ -307,5 +351,54 @@ var IBusManager = class {
                     return GLib.SOURCE_REMOVE;
                 });
     }
+
+    setCompletionEnabled(enabled, callback) {
+        /* Needs typing-booster available */
+        if (enabled && !this._engines.has(TYPING_BOOSTER_ENGINE))
+            return false;
+        /* Can do only on xkb engines */
+        if (enabled && !this._currentEngineName.startsWith('xkb:'))
+            return false;
+
+        if (this._oskCompletion === enabled)
+            return true;
+
+        this._oskCompletion = enabled;
+        let settings =
+            new Gio.Settings({schema_id: IBUS_TYPING_BOOSTER_SCHEMA});
+
+        if (enabled) {
+            this._preOskState = {
+                'engine': this._currentEngineName,
+                'emoji': settings.get_value(KEY_EMOJIPREDICTIONS),
+                'langs': settings.get_value(KEY_DICTIONARY),
+                'completion': settings.get_value(KEY_INLINECOMPLETION),
+                'inputMethod': settings.get_value(KEY_INPUTMETHOD),
+            };
+            settings.reset(KEY_EMOJIPREDICTIONS);
+
+            const removeEncoding = l => l.replace(/\..*/, '');
+            const removeDups = (l, pos, arr) => {
+                return !pos || arr[pos - 1] !== l;
+            };
+            settings.set_string(
+                KEY_DICTIONARY,
+                GLib.get_language_names().map(removeEncoding)
+                    .sort().filter(removeDups).join(','));
+
+            settings.reset(KEY_INLINECOMPLETION);
+            settings.set_string(KEY_INPUTMETHOD, 'NoIME');
+            this._setEngine(TYPING_BOOSTER_ENGINE, callback);
+        } else if (this._preOskState) {
+            const {engine, emoji, langs, completion, inputMethod} =
+                  this._preOskState;
+            this._preOskState = null;
+            this._setEngine(engine, callback);
+            settings.set_value(KEY_EMOJIPREDICTIONS, emoji);
+            settings.set_value(KEY_DICTIONARY, langs);
+            settings.set_value(KEY_INLINECOMPLETION, completion);
+            settings.set_value(KEY_INPUTMETHOD, inputMethod);
+        }
+        return true;
+    }
 };
-Signals.addSignalMethods(IBusManager.prototype);

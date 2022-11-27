@@ -1017,10 +1017,23 @@ var ScreenshotUI = GObject.registerClass({
         });
 
         this._screencastInProgress = false;
+        this._screencastSupported = false;
+
+        this._screencastProxy = new ScreencastProxy(
+            Gio.DBus.session,
+            'org.gnome.Shell.Screencast',
+            '/org/gnome/Shell/Screencast',
+            (object, error) => {
+                if (error !== null) {
+                    log('Error connecting to the screencast service');
+                    return;
+                }
+
+                this._screencastSupported = this._screencastProxy.ScreencastSupported;
+                this._castButton.visible = this._screencastSupported;
+            });
 
         this._lockdownSettings = new Gio.Settings({ schema_id: 'org.gnome.desktop.lockdown' });
-
-        Main.sessionMode.connect('updated', () => this.close(true));
 
         // The full-screen screenshot has a separate container so that we can
         // show it without the screenshot UI fade-in for a nicer animation.
@@ -1090,7 +1103,7 @@ var ScreenshotUI = GObject.registerClass({
 
         this._closeButton = new St.Button({
             style_class: 'screenshot-ui-close-button',
-            child: new St.Icon({ icon_name: 'preview-close-symbolic' }),
+            icon_name: 'preview-close-symbolic',
         });
         this._closeButton.add_constraint(new Clutter.BindConstraint({
             source: this._panel,
@@ -1202,18 +1215,19 @@ var ScreenshotUI = GObject.registerClass({
 
         this._shotButton = new St.Button({
             style_class: 'screenshot-ui-shot-cast-button',
+            icon_name: 'camera-photo-symbolic',
             checked: true,
         });
-        this._shotButton.set_child(new St.Icon({ icon_name: 'camera-photo-symbolic' }));
         this._shotButton.connect('notify::checked',
             this._onShotButtonToggled.bind(this));
         this._shotCastContainer.add_child(this._shotButton);
 
         this._castButton = new St.Button({
             style_class: 'screenshot-ui-shot-cast-button',
+            icon_name: 'camera-web-symbolic',
             toggle_mode: true,
+            visible: false,
         });
-        this._castButton.set_child(new St.Icon({ icon_name: 'camera-web-symbolic' }));
         this._castButton.connect('notify::checked',
             this._onCastButtonToggled.bind(this));
         this._shotCastContainer.add_child(this._castButton);
@@ -1252,9 +1266,9 @@ var ScreenshotUI = GObject.registerClass({
 
         this._showPointerButton = new St.Button({
             style_class: 'screenshot-ui-show-pointer-button',
+            icon_name: 'screenshot-ui-show-pointer-symbolic',
             toggle_mode: true,
         });
-        this._showPointerButton.set_child(new St.Icon({ icon_name: 'screenshot-ui-show-pointer-symbolic' }));
         this._showPointerButtonContainer.add_child(this._showPointerButton);
 
         this.add_child(new Tooltip(this._showPointerButton, {
@@ -1285,10 +1299,10 @@ var ScreenshotUI = GObject.registerClass({
         });
 
         const uiModes =
-            Shell.ActionMode.ALL &
-            ~(Shell.ActionMode.LOCK_SCREEN |
-                Shell.ActionMode.UNLOCK_SCREEN |
-                Shell.ActionMode.LOGIN_SCREEN);
+            Shell.ActionMode.ALL & ~Shell.ActionMode.LOGIN_SCREEN;
+        const restrictedModes =
+            uiModes &
+            ~(Shell.ActionMode.LOCK_SCREEN | Shell.ActionMode.UNLOCK_SCREEN);
 
         Main.wm.addKeybinding(
             'show-screenshot-ui',
@@ -1302,7 +1316,7 @@ var ScreenshotUI = GObject.registerClass({
             'show-screen-recording-ui',
             new Gio.Settings({ schema_id: 'org.gnome.shell.keybindings' }),
             Meta.KeyBindingFlags.IGNORE_AUTOREPEAT,
-            uiModes,
+            restrictedModes,
             showScreenRecordingUI
         );
 
@@ -1310,7 +1324,7 @@ var ScreenshotUI = GObject.registerClass({
             'screenshot-window',
             new Gio.Settings({ schema_id: 'org.gnome.shell.keybindings' }),
             Meta.KeyBindingFlags.IGNORE_AUTOREPEAT | Meta.KeyBindingFlags.PER_WINDOW,
-            uiModes,
+            restrictedModes,
             async (_display, window, _binding) => {
                 try {
                     const actor = window.get_compositor_private();
@@ -1341,6 +1355,15 @@ var ScreenshotUI = GObject.registerClass({
                 }
             }
         );
+
+        Main.sessionMode.connect('updated',
+            () => this._sessionUpdated());
+        this._sessionUpdated();
+    }
+
+    _sessionUpdated() {
+        this.close(true);
+        this._castButton.reactive = Main.sessionMode.allowScreencast;
     }
 
     _refreshButtonLayout() {
@@ -1429,6 +1452,9 @@ var ScreenshotUI = GObject.registerClass({
         if (this._screencastInProgress)
             return;
 
+        if (mode === UIMode.SCREENCAST && !this._screencastSupported)
+            return;
+
         this._castButton.checked = mode === UIMode.SCREENCAST;
 
         if (!this.visible) {
@@ -1457,7 +1483,9 @@ var ScreenshotUI = GObject.registerClass({
             }
 
             this._windowButton.reactive =
-                windows.length > 0 && !this._castButton.checked;
+                Main.sessionMode.hasWindows &&
+                windows.length > 0 &&
+                !this._castButton.checked;
             if (!this._windowButton.reactive)
                 this._selectionButton.checked = true;
 
@@ -1501,12 +1529,18 @@ var ScreenshotUI = GObject.registerClass({
         // pop their grabs.
         Main.layoutManager.emit('system-modal-opened');
 
+        const { screenshotUIGroup } = Main.layoutManager;
+        screenshotUIGroup.get_parent().set_child_above_sibling(
+            screenshotUIGroup, null);
+
         const grabResult = this._grabHelper.grab({
             actor: this,
             onUngrab: () => this.close(),
         });
-        if (!grabResult)
+        if (!grabResult) {
+            this.close(true);
             return;
+        }
 
         this._refreshButtonLayout();
 
@@ -1789,7 +1823,7 @@ var ScreenshotUI = GObject.registerClass({
         }
     }
 
-    _startScreencast() {
+    async _startScreencast() {
         if (this._windowButton.checked)
             return; // TODO
 
@@ -1813,15 +1847,19 @@ var ScreenshotUI = GObject.registerClass({
         this.close(true);
 
         // This is a bit awkward because creating a proxy synchronously hangs Shell.
-        const doStartScreencast = () => {
-            let method =
-                this._screencastProxy.ScreencastRemote.bind(this._screencastProxy);
-            if (w !== -1) {
-                method = this._screencastProxy.ScreencastAreaRemote.bind(
-                    this._screencastProxy, x, y, w, h);
-            }
+        let method =
+            this._screencastProxy.ScreencastAsync.bind(this._screencastProxy);
+        if (w !== -1) {
+            method = this._screencastProxy.ScreencastAreaAsync.bind(
+                this._screencastProxy, x, y, w, h);
+        }
 
-            method(
+        // Set this before calling the method as the screen recording indicator
+        // will check it before the success callback fires.
+        this._setScreencastInProgress(true);
+
+        try {
+            const [success, path] = await method(
                 GLib.build_filenamev([
                     /* Translators: this is the folder where recorded
                        screencasts are stored. */
@@ -1832,50 +1870,21 @@ var ScreenshotUI = GObject.registerClass({
                     /* xgettext:no-c-format */
                     _('Screencast from %d %t.webm'),
                 ]),
-                { 'draw-cursor': new GLib.Variant('b', drawCursor) },
-                ([success, path], error) => {
-                    if (error !== null) {
-                        this._setScreencastInProgress(false);
-                        log(`Error starting screencast: ${error.message}`);
-                        return;
-                    }
-
-                    if (!success) {
-                        this._setScreencastInProgress(false);
-                        log('Error starting screencast');
-                        return;
-                    }
-
-                    this._screencastPath = path;
-                }
-            );
-        };
-
-        // Set this before calling the method as the screen recording indicator
-        // will check it before the success callback fires.
-        this._setScreencastInProgress(true);
-
-        if (this._screencastProxy) {
-            doStartScreencast();
-        } else {
-            new ScreencastProxy(
-                Gio.DBus.session,
-                'org.gnome.Shell.Screencast',
-                '/org/gnome/Shell/Screencast',
-                (object, error) => {
-                    if (error !== null) {
-                        log('Error connecting to the screencast service');
-                        return;
-                    }
-
-                    this._screencastProxy = object;
-                    doStartScreencast();
-                }
-            );
+                {'draw-cursor': new GLib.Variant('b', drawCursor)});
+            if (!success)
+                throw new Error();
+            this._screencastPath = path;
+        } catch (error) {
+            this._setScreencastInProgress(false);
+            const {message} = error;
+            if (message)
+                log(`Error starting screencast: ${message}`);
+            else
+                log('Error starting screencast');
         }
     }
 
-    stopScreencast() {
+    async stopScreencast() {
         if (!this._screencastInProgress)
             return;
 
@@ -1883,58 +1892,59 @@ var ScreenshotUI = GObject.registerClass({
         // will check it before the success callback fires.
         this._setScreencastInProgress(false);
 
-        this._screencastProxy.StopScreencastRemote((success, error) => {
-            if (error !== null) {
-                log(`Error stopping screencast: ${error.message}`);
-                return;
-            }
-
-            if (!success) {
+        try {
+            const [success] = await this._screencastProxy.StopScreencastAsync();
+            if (!success)
+                throw new Error();
+        } catch (error) {
+            const {message} = error;
+            if (message)
+                log(`Error stopping screencast: ${message}`);
+            else
                 log('Error stopping screencast');
+            return;
+        }
+
+        // Show a notification.
+        const file = Gio.file_new_for_path(this._screencastPath);
+
+        const source = new MessageTray.Source(
+            // Translators: notification source name.
+            _('Screenshot'),
+            'screencast-recorded-symbolic'
+        );
+        const notification = new MessageTray.Notification(
+            source,
+            // Translators: notification title.
+            _('Screencast recorded'),
+            // Translators: notification body when a screencast was recorded.
+            _('Click here to view the video.')
+        );
+        // Translators: button on the screencast notification.
+        notification.addAction(_('Show in Files'), () => {
+            const app =
+                Gio.app_info_get_default_for_type('inode/directory', false);
+
+            if (app === null) {
+                // It may be null e.g. in a toolbox without nautilus.
+                log('Error showing in files: no default app set for inode/directory');
                 return;
             }
 
-            // Show a notification.
-            const file = Gio.file_new_for_path(this._screencastPath);
-
-            const source = new MessageTray.Source(
-                // Translators: notification source name.
-                _('Screenshot'),
-                'screencast-recorded-symbolic'
-            );
-            const notification = new MessageTray.Notification(
-                source,
-                // Translators: notification title.
-                _('Screencast recorded'),
-                // Translators: notification body when a screencast was recorded.
-                _('Click here to view the video.')
-            );
-            // Translators: button on the screencast notification.
-            notification.addAction(_('Show in Files'), () => {
-                const app =
-                    Gio.app_info_get_default_for_type('inode/directory', false);
-
-                if (app === null) {
-                    // It may be null e.g. in a toolbox without nautilus.
-                    log('Error showing in files: no default app set for inode/directory');
-                    return;
-                }
-
-                app.launch([file], global.create_app_launch_context(0, -1));
-            });
-            notification.connect('activated', () => {
-                try {
-                    Gio.app_info_launch_default_for_uri(
-                        file.get_uri(), global.create_app_launch_context(0, -1));
-                } catch (err) {
-                    logError(err, 'Error opening screencast');
-                }
-            });
-            notification.setTransient(true);
-
-            Main.messageTray.add(source);
-            source.showNotification(notification);
+            app.launch([file], global.create_app_launch_context(0, -1));
         });
+        notification.connect('activated', () => {
+            try {
+                Gio.app_info_launch_default_for_uri(
+                    file.get_uri(), global.create_app_launch_context(0, -1));
+            } catch (err) {
+                logError(err, 'Error opening screencast');
+            }
+        });
+        notification.setTransient(true);
+
+        Main.messageTray.add(source);
+        source.showNotification(notification);
     }
 
     get screencast_in_progress() {
@@ -2057,7 +2067,7 @@ function _storeScreenshot(bytes, pixbuf) {
 
     if (!disableSaveToDisk) {
         const dir = Gio.File.new_for_path(GLib.build_filenamev([
-            GLib.get_user_special_dir(GLib.UserDirectory.DIRECTORY_PICTURES),
+            GLib.get_user_special_dir(GLib.UserDirectory.DIRECTORY_PICTURES) || GLib.get_home_dir(),
             // Translators: name of the folder under ~/Pictures for screenshots.
             _('Screenshots'),
         ]));

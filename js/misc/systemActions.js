@@ -84,7 +84,7 @@ const SystemActions = GObject.registerClass({
             name: C_("search-result", "Power Off"),
             iconName: 'system-shutdown-symbolic',
             // Translators: A list of keywords that match the power-off action, separated by semicolons
-            keywords: tokenizeKeywords(_('power off;shutdown;halt;stop')),
+            keywords: tokenizeKeywords(_('power off;poweroff;shutdown;halt;stop')),
             available: false,
         });
         this._actions.set(RESTART_ACTION_ID, {
@@ -329,14 +329,14 @@ const SystemActions = GObject.registerClass({
         this.notify('can-lock-screen');
     }
 
-    _updateHaveShutdown() {
-        this._session.CanShutdownRemote((result, error) => {
-            if (error)
-                return;
-
-            this._canHavePowerOff = result[0];
-            this._updatePowerOff();
-        });
+    async _updateHaveShutdown() {
+        try {
+            const [canShutdown] = await this._session.CanShutdownAsync();
+            this._canHavePowerOff = canShutdown;
+        } catch (e) {
+            this._canHavePowerOff = false;
+        }
+        this._updatePowerOff();
     }
 
     _updatePowerOff() {
@@ -350,13 +350,11 @@ const SystemActions = GObject.registerClass({
         this.notify('can-restart');
     }
 
-    _updateHaveSuspend() {
-        this._loginManager.canSuspend(
-            (canSuspend, needsAuth) => {
-                this._canHaveSuspend = canSuspend;
-                this._suspendNeedsAuth = needsAuth;
-                this._updateSuspend();
-            });
+    async _updateHaveSuspend() {
+        const {canSuspend, needsAuth} = await this._loginManager.canSuspend();
+        this._canHaveSuspend = canSuspend;
+        this._suspendNeedsAuth = needsAuth;
+        this._updateSuspend();
     }
 
     _updateSuspend() {
@@ -436,21 +434,21 @@ const SystemActions = GObject.registerClass({
             throw new Error('The logout action is not available!');
 
         Main.overview.hide();
-        this._session.LogoutRemote(0);
+        this._session.LogoutAsync(0).catch(logError);
     }
 
     activatePowerOff() {
         if (!this._actions.get(POWER_OFF_ACTION_ID).available)
             throw new Error('The power-off action is not available!');
 
-        this._session.ShutdownRemote(0);
+        this._session.ShutdownAsync(0).catch(logError);
     }
 
     activateRestart() {
         if (!this._actions.get(RESTART_ACTION_ID).available)
             throw new Error('The restart action is not available!');
 
-        this._session.RebootRemote();
+        this._session.RebootAsync().catch(logError);
     }
 
     activateSuspend() {

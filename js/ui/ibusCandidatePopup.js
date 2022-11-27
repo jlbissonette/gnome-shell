@@ -59,14 +59,12 @@ var CandidateArea = GObject.registerClass({
             style_class: 'candidate-page-button candidate-page-button-previous button',
             x_expand: true,
         });
-        this._previousButton.child = new St.Icon({ style_class: 'candidate-page-button-icon' });
         this._buttonBox.add_child(this._previousButton);
 
         this._nextButton = new St.Button({
             style_class: 'candidate-page-button candidate-page-button-next button',
             x_expand: true,
         });
-        this._nextButton.child = new St.Icon({ style_class: 'candidate-page-button-icon' });
         this._buttonBox.add_child(this._nextButton);
 
         this.add(this._buttonBox);
@@ -104,14 +102,14 @@ var CandidateArea = GObject.registerClass({
             this.vertical = false;
             this.remove_style_class_name('vertical');
             this.add_style_class_name('horizontal');
-            this._previousButton.child.icon_name = 'go-previous-symbolic';
-            this._nextButton.child.icon_name = 'go-next-symbolic';
+            this._previousButton.icon_name = 'go-previous-symbolic';
+            this._nextButton.icon_name = 'go-next-symbolic';
         } else {                // VERTICAL || SYSTEM
             this.vertical = true;
             this.add_style_class_name('vertical');
             this.remove_style_class_name('horizontal');
-            this._previousButton.child.icon_name = 'go-up-symbolic';
-            this._nextButton.child.icon_name = 'go-down-symbolic';
+            this._previousButton.icon_name = 'go-up-symbolic';
+            this._nextButton.icon_name = 'go-down-symbolic';
         }
     }
 
@@ -155,7 +153,7 @@ class IbusCandidatePopup extends BoxPointer.BoxPointer {
         this._dummyCursor = new Clutter.Actor({ opacity: 0 });
         Main.layoutManager.uiGroup.add_actor(this._dummyCursor);
 
-        Main.layoutManager.addChrome(this);
+        Main.layoutManager.addTopChrome(this);
 
         const box = new St.BoxLayout({
             style_class: 'candidate-popup-content',
@@ -272,6 +270,7 @@ class IbusCandidatePopup extends BoxPointer.BoxPointer {
                 indexes.push(indexLabel.get_text());
 
             Main.keyboard.resetSuggestions();
+            Main.keyboard.setSuggestionsVisible(visible);
 
             let candidates = [];
             for (let i = startIndex; i < endIndex; ++i) {
@@ -291,10 +290,12 @@ class IbusCandidatePopup extends BoxPointer.BoxPointer {
             this._candidateArea.updateButtons(lookupTable.is_round(), page, nPages);
         });
         panelService.connect('show-lookup-table', () => {
+            Main.keyboard.setSuggestionsVisible(true);
             this._candidateArea.show();
             this._updateVisibility();
         });
         panelService.connect('hide-lookup-table', () => {
+            Main.keyboard.setSuggestionsVisible(false);
             this._candidateArea.hide();
             this._updateVisibility();
         });
@@ -321,7 +322,12 @@ class IbusCandidatePopup extends BoxPointer.BoxPointer {
         if (isVisible) {
             this.setPosition(this._dummyCursor, 0);
             this.open(BoxPointer.PopupAnimation.NONE);
-            this.get_parent().set_child_above_sibling(this, null);
+            // We shouldn't be above some components like the screenshot UI,
+            // so don't raise to the top.
+            // The on-screen keyboard is expected to be above any entries,
+            // so just above the keyboard gets us to the right layer.
+            const { keyboardBox } = Main.layoutManager;
+            this.get_parent().set_child_above_sibling(this, keyboardBox);
         } else {
             this.close(BoxPointer.PopupAnimation.NONE);
         }

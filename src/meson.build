@@ -1,3 +1,5 @@
+src_builddir = meson.current_build_dir()
+
 service_data = configuration_data()
 service_data.set('libexecdir', libexecdir)
 
@@ -16,20 +18,21 @@ script_data.set('pkglibdir', pkglibdir)
 script_data.set('PYTHON', python.full_path())
 script_data.set('VERSION', meson.project_version())
 
-script_tools = ['gnome-shell-perf-tool']
+perf_tool = configure_file(
+  input: 'gnome-shell-perf-tool.in',
+  output: 'gnome-shell-perf-tool',
+  configuration: script_data,
+  install_dir: bindir
+)
 
 if get_option('extensions_tool')
-  script_tools += 'gnome-shell-extension-tool'
-endif
-
-foreach tool : script_tools
   configure_file(
-    input: tool + '.in',
-    output: tool,
+    input: 'gnome-shell-extension-tool.in',
+    output: 'gnome-shell-extension-tool',
     configuration: script_data,
     install_dir: bindir
   )
-endforeach
+endif
 
 install_data('gnome-shell-extension-prefs',
   install_dir: bindir
@@ -65,7 +68,6 @@ gnome_shell_deps = [
 ]
 
 gnome_shell_deps += nm_deps
-gnome_shell_deps += recorder_deps
 
 tools_cflags = '-DLOCALEDIR="@0@"'.format(localedir)
 tools_deps = [gio_dep, gjs_dep]
@@ -113,7 +115,8 @@ libshell_public_headers = [
   'shell-window-preview.h',
   'shell-window-preview-layout.h',
   'shell-window-tracker.h',
-  'shell-wm.h'
+  'shell-wm.h',
+  'shell-workspace-background.h'
 ]
 
 if have_networkmanager
@@ -158,7 +161,8 @@ libshell_sources = [
   'shell-window-preview.c',
   'shell-window-preview-layout.c',
   'shell-window-tracker.c',
-  'shell-wm.c'
+  'shell-wm.c',
+  'shell-workspace-background.c'
 ]
 
 if have_networkmanager
@@ -214,7 +218,7 @@ libshell_dep = declare_dependency(link_with: libshell)
 libshell_gir_includes = [
   'Clutter-@0@'.format(mutter_api_version),
   'Meta-@0@'.format(mutter_api_version),
-  'Gcr-3',
+  'Gcr-4',
   'PolkitAgent-1.0'
 ]
 

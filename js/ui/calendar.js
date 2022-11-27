@@ -273,6 +273,15 @@ class DBusEventSource extends EventSourceBase {
         this._lastRequestEnd = null;
     }
 
+    _removeMatching(uidPrefix) {
+        let changed = false;
+        for (const id of this._events.keys()) {
+            if (id.startsWith(uidPrefix))
+                changed = this._events.delete(id) || changed;
+        }
+        return changed;
+    }
+
     _onNameAppeared() {
         this._initialized = true;
         this._resetCache();
@@ -287,12 +296,21 @@ class DBusEventSource extends EventSourceBase {
     _onEventsAddedOrUpdated(dbusProxy, nameOwner, argArray) {
         const [appointments = []] = argArray;
         let changed = false;
+        const handledRemovals = new Set();
 
         for (let n = 0; n < appointments.length; n++) {
             const [id, summary, startTime, endTime] = appointments[n];
             const date = new Date(startTime * 1000);
             const end = new Date(endTime * 1000);
             let event = new CalendarEvent(id, date, end, summary);
+            /* It's a recurring event */
+            if (!id.endsWith('\n')) {
+                const parentId = id.substr(0, id.lastIndexOf('\n') + 1);
+                if (!handledRemovals.has(parentId)) {
+                    handledRemovals.add(parentId);
+                    this._removeMatching(parentId);
+                }
+            }
             this._events.set(event.id, event);
 
             changed = true;
@@ -307,7 +325,7 @@ class DBusEventSource extends EventSourceBase {
 
         let changed = false;
         for (const id of ids)
-            changed ||= this._events.delete(id);
+            changed = this._removeMatching(id) || changed;
 
         if (changed)
             this.emit('changed');
@@ -317,13 +335,7 @@ class DBusEventSource extends EventSourceBase {
         let [sourceUid = ''] = argArray;
         sourceUid += '\n';
 
-        let changed = false;
-        for (const id of this._events.keys()) {
-            if (id.startsWith(sourceUid))
-                changed ||= this._events.delete(id);
-        }
-
-        if (changed)
+        if (this._removeMatching(sourceUid))
             this.emit('changed');
     }
 
@@ -337,11 +349,11 @@ class DBusEventSource extends EventSourceBase {
                 this._events.clear();
                 this.emit('changed');
             }
-            this._dbusProxy.SetTimeRangeRemote(
+            this._dbusProxy.SetTimeRangeAsync(
                 this._curRequestBegin.getTime() / 1000,
                 this._curRequestEnd.getTime() / 1000,
                 forceReload,
-                Gio.DBusCallFlags.NONE);
+                Gio.DBusCallFlags.NONE).catch(logError);
         }
     }
 
@@ -469,10 +481,10 @@ var Calendar = GObject.registerClass({
 
         this._backButton = new St.Button({
             style_class: 'calendar-change-month-back pager-button',
+            icon_name: 'pan-start-symbolic',
             accessible_name: _('Previous month'),
             can_focus: true,
         });
-        this._backButton.add_actor(new St.Icon({ icon_name: 'pan-start-symbolic' }));
         this._topBox.add(this._backButton);
         this._backButton.connect('clicked', this._onPrevMonthButtonClicked.bind(this));
 
@@ -487,10 +499,10 @@ var Calendar = GObject.registerClass({
 
         this._forwardButton = new St.Button({
             style_class: 'calendar-change-month-forward pager-button',
+            icon_name: 'pan-end-symbolic',
             accessible_name: _('Next month'),
             can_focus: true,
         });
-        this._forwardButton.add_actor(new St.Icon({ icon_name: 'pan-end-symbolic' }));
         this._topBox.add(this._forwardButton);
         this._forwardButton.connect('clicked', this._onNextMonthButtonClicked.bind(this));
 
@@ -896,7 +908,7 @@ class DoNotDisturbSwitch extends PopupMenu.Switch {
             Gio.SettingsBindFlags.INVERT_BOOLEAN);
 
         this.connect('destroy', () => {
-            this._settings.run_dispose();
+            Gio.Settings.unbind(this, 'state');
             this._settings = null;
         });
     }
@@ -976,8 +988,10 @@ class CalendarMessageList extends St.Widget {
             y_expand: true,
             y_align: Clutter.ActorAlign.START,
         });
-        this._sectionList.connect('actor-added', this._sync.bind(this));
-        this._sectionList.connect('actor-removed', this._sync.bind(this));
+        this._sectionList.connectObject(
+            'actor-added', this._sync.bind(this),
+            'actor-removed', this._sync.bind(this),
+            this);
         this._scrollView.add_actor(this._sectionList);
 
         this._mediaSection = new Mpris.MediaSection();

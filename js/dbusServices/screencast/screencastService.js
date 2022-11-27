@@ -6,7 +6,7 @@ imports.gi.versions.Gtk = '4.0';
 
 const { Gio, GLib, Gst, Gtk } = imports.gi;
 
-const { loadInterfaceXML, loadSubInterfaceXML } = imports.misc.fileUtils;
+const { loadInterfaceXML, loadSubInterfaceXML } = imports.misc.dbusUtils;
 const { ServiceImplementation } = imports.dbusService;
 
 const ScreencastIface = loadInterfaceXML('org.gnome.Shell.Screencast');
@@ -76,7 +76,7 @@ var Recorder = class {
 
     _applyOptions(options) {
         for (const option in options)
-            options[option] = options[option].deep_unpack();
+            options[option] = options[option].deepUnpack();
 
         if (options['pipeline'] !== undefined)
             this._pipelineString = options['pipeline'];
@@ -230,9 +230,13 @@ var Recorder = class {
 
     _ensurePipeline(nodeId) {
         const framerate = this._framerate;
+        const needsCopy =
+            Gst.Registry.get().check_feature_version('pipewiresrc', 0, 3, 57) &&
+            !Gst.Registry.get().check_feature_version('videoconvert', 1, 20, 4);
 
         let fullPipeline = `
             pipewiresrc path=${nodeId}
+                        always-copy=${needsCopy}
                         do-timestamp=true
                         keepalive-time=1000
                         resend-last=true !
@@ -254,11 +258,26 @@ var Recorder = class {
 };
 
 var ScreencastService = class extends ServiceImplementation {
+    static canScreencast() {
+        const elements = [
+            'pipewiresrc',
+            'filesink',
+            ...DEFAULT_PIPELINE.split('!').map(e => e.trim().split(' ').at(0)),
+        ];
+        return Gst.init_check(null) &&
+            elements.every(e => Gst.ElementFactory.find(e) != null);
+    }
+
     constructor() {
         super(ScreencastIface, '/org/gnome/Shell/Screencast');
 
+        this.hold(); // gstreamer initializing can take a bit
+        this._canScreencast = ScreencastService.canScreencast();
+
         Gst.init(null);
         Gtk.init();
+
+        this.release();
 
         this._recorders = new Map();
         this._senders = new Map();
@@ -274,6 +293,10 @@ var ScreencastService = class extends ServiceImplementation {
         this._introspectProxy = new IntrospectProxy(Gio.DBus.session,
             'org.gnome.Shell.Introspect',
             '/org/gnome/Shell/Introspect');
+    }
+
+    get ScreencastSupported() {
+        return this._canScreencast;
     }
 
     _removeRecorder(sender) {
@@ -308,19 +331,17 @@ var ScreencastService = class extends ServiceImplementation {
                     break;
                 case 'd': {
                     const datetime = GLib.DateTime.new_now_local();
-                    const datestr = datetime.format('%0x');
-                    const datestrEscaped = datestr.replace(/\//g, '-');
+                    const datestr = datetime.format('%Y-%m-%d');
 
-                    filename += datestrEscaped;
+                    filename += datestr;
                     break;
                 }
 
                 case 't': {
                     const datetime = GLib.DateTime.new_now_local();
-                    const datestr = datetime.format('%0X');
-                    const datestrEscaped = datestr.replace(/\//g, ':');
+                    const datestr = datetime.format('%H-%M-%S');
 
-                    filename += datestrEscaped;
+                    filename += datestr;
                     break;
                 }
 

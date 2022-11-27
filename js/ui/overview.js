@@ -2,7 +2,7 @@
 /* exported Overview, ANIMATION_TIME */
 
 const { Clutter, Gio, GLib, GObject, Meta, Shell, St } = imports.gi;
-const Signals = imports.signals;
+const Signals = imports.misc.signals;
 
 // Time for initial animation going into Overview mode;
 // this is defined here to make it available in imports.
@@ -78,6 +78,14 @@ class OverviewActor extends St.BoxLayout {
         this.add_child(this._controls);
     }
 
+    prepareToEnterOverview() {
+        this._controls.prepareToEnterOverview();
+    }
+
+    prepareToLeaveOverview() {
+        this._controls.prepareToLeaveOverview();
+    }
+
     animateToOverview(state, callback) {
         this._controls.animateToOverview(state, callback);
     }
@@ -103,8 +111,10 @@ class OverviewActor extends St.BoxLayout {
     }
 });
 
-var Overview = class {
+var Overview = class extends Signals.EventEmitter {
     constructor() {
+        super();
+
         this._initCalled = false;
         this._visible = false;
 
@@ -448,7 +458,8 @@ var Overview = class {
         if (this._shown) {
             let shouldBeModal = !this._inXdndDrag;
             if (shouldBeModal && !this._modal) {
-                if (global.display.get_grab_op() !== Meta.GrabOp.NONE) {
+                if (global.display.get_grab_op() !== Meta.GrabOp.NONE &&
+                    global.display.get_grab_op() !== Meta.GrabOp.WAYLAND_POPUP) {
                     this.hide();
                     return false;
                 }
@@ -456,14 +467,14 @@ var Overview = class {
                 const grab = Main.pushModal(global.stage, {
                     actionMode: Shell.ActionMode.OVERVIEW,
                 });
-                if (grab.get_seat_state() !== Clutter.GrabState.NONE) {
-                    this._grab = grab;
-                    this._modal = true;
-                } else {
+                if (grab.get_seat_state() !== Clutter.GrabState.ALL) {
                     Main.popModal(grab);
                     this.hide();
                     return false;
                 }
+
+                this._grab = grab;
+                this._modal = true;
             }
         } else {
             // eslint-disable-next-line no-lonely-if
@@ -508,12 +519,13 @@ var Overview = class {
 
         Meta.disable_unredirect_for_display(global.display);
 
-        this._overview.animateToOverview(state, () => this._showDone());
-
         Main.layoutManager.overviewGroup.set_child_above_sibling(
             this._coverPane, null);
         this._coverPane.show();
+
+        this._overview.prepareToEnterOverview();
         this.emit('showing');
+        this._overview.animateToOverview(state, () => this._showDone());
     }
 
     _showDone() {
@@ -561,12 +573,13 @@ var Overview = class {
         this._animationInProgress = true;
         this._visibleTarget = false;
 
-        this._overview.animateFromOverview(() => this._hideDone());
-
         Main.layoutManager.overviewGroup.set_child_above_sibling(
             this._coverPane, null);
         this._coverPane.show();
+
+        this._overview.prepareToLeaveOverview();
         this.emit('hiding');
+        this._overview.animateFromOverview(() => this._hideDone());
     }
 
     _hideDone() {
@@ -649,4 +662,3 @@ var Overview = class {
         return this._overview.searchEntry;
     }
 };
-Signals.addSignalMethods(Overview.prototype);

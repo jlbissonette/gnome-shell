@@ -1,9 +1,10 @@
 // -*- mode: js; js-indent-level: 4; indent-tabs-mode: nil -*-
 /* exported BANNER_MESSAGE_KEY, BANNER_MESSAGE_TEXT_KEY, LOGO_KEY,
-            DISABLE_USER_LIST_KEY, fadeInActor, fadeOutActor, cloneAndFadeOutActor */
+            DISABLE_USER_LIST_KEY, fadeInActor, fadeOutActor, cloneAndFadeOutActor,
+            ShellUserVerifier */
 
 const { Clutter, Gdm, Gio, GLib } = imports.gi;
-const Signals = imports.signals;
+const Signals = imports.misc.signals;
 
 const Batch = imports.gdm.batch;
 const OVirt = imports.gdm.oVirt;
@@ -135,8 +136,9 @@ function cloneAndFadeOutActor(actor) {
     return hold;
 }
 
-var ShellUserVerifier = class {
+var ShellUserVerifier = class extends Signals.EventEmitter {
     constructor(client, params) {
+        super();
         params = Params.parse(params, { reauthenticationOnly: false });
         this._reauthOnly = params.reauthenticationOnly;
 
@@ -271,16 +273,13 @@ var ShellUserVerifier = class {
         this._userVerifierChoiceList.call_select_choice(serviceName, key, this._cancellable, null);
     }
 
-    answerQuery(serviceName, answer) {
-        if (!this.hasPendingMessages) {
+    async answerQuery(serviceName, answer) {
+        try {
+            await this._handlePendingMessages();
             this._userVerifier.call_answer_query(serviceName, answer, this._cancellable, null);
-        } else {
-            const cancellable = this._cancellable;
-            let signalId = this.connect('no-more-messages', () => {
-                this.disconnect(signalId);
-                if (!cancellable.is_cancelled())
-                    this._userVerifier.call_answer_query(serviceName, answer, cancellable, null);
-            });
+        } catch (e) {
+            if (!e.matches(Gio.IOErrorEnum, Gio.IOErrorEnum.CANCELLED))
+                logError(e);
         }
     }
 
@@ -374,7 +373,7 @@ var ShellUserVerifier = class {
         this.emit('show-message', null, null, MessageType.NONE);
     }
 
-    _checkForFingerprintReader() {
+    async _checkForFingerprintReader() {
         this._fingerprintReaderType = FingerprintReaderType.NONE;
 
         if (!this._settings.get_boolean(FINGERPRINT_AUTHENTICATION_KEY) ||
@@ -383,21 +382,19 @@ var ShellUserVerifier = class {
             return;
         }
 
-        this._fprintManager.GetDefaultDeviceRemote(Gio.DBusCallFlags.NONE, this._cancellable,
-            (params, error) => {
-                if (!error && params) {
-                    const [device] = params;
-                    const fprintDeviceProxy = new FprintDeviceProxy(Gio.DBus.system,
-                        'net.reactivated.Fprint',
-                        device);
-                    const fprintDeviceType = fprintDeviceProxy['scan-type'];
+        try {
+            const [device] = await this._fprintManager.GetDefaultDeviceAsync(
+                Gio.DBusCallFlags.NONE, this._cancellable);
+            const fprintDeviceProxy = new FprintDeviceProxy(Gio.DBus.system,
+                'net.reactivated.Fprint',
+                device);
+            const fprintDeviceType = fprintDeviceProxy['scan-type'];
 
-                    this._fingerprintReaderType = fprintDeviceType === 'swipe'
-                        ? FingerprintReaderType.SWIPE
-                        : FingerprintReaderType.PRESS;
-                    this._updateDefaultService();
-                }
-            });
+            this._fingerprintReaderType = fprintDeviceType === 'swipe'
+                ? FingerprintReaderType.SWIPE
+                : FingerprintReaderType.PRESS;
+            this._updateDefaultService();
+        } catch (e) {}
     }
 
     _onCredentialManagerAuthenticated(credentialManager, _token) {
@@ -590,7 +587,7 @@ var ShellUserVerifier = class {
         if (!this.serviceIsForeground(serviceName))
             return;
 
-        this.emit('show-choice-list', serviceName, promptMessage, list.deep_unpack());
+        this.emit('show-choice-list', serviceName, promptMessage, list.deepUnpack());
     }
 
     _onInfo(client, serviceName, info) {
@@ -702,7 +699,7 @@ var ShellUserVerifier = class {
             (this._reauthOnly || this._failCounter < this.allowedFailures);
     }
 
-    _verificationFailed(serviceName, shouldRetry) {
+    async _verificationFailed(serviceName, shouldRetry) {
         if (serviceName === FINGERPRINT_SERVICE_NAME) {
             if (this._fingerprintFailedId)
                 GLib.source_remove(this._fingerprintFailedId);
@@ -716,34 +713,36 @@ var ShellUserVerifier = class {
 
         const doneTrying = !shouldRetry || !this._canRetry();
 
-        if (doneTrying) {
-            this._disconnectSignals();
-
-            // eslint-disable-next-line no-lonely-if
-            if (!this.hasPendingMessages) {
+        this.emit('verification-failed', serviceName, !doneTrying);
+        try {
+            if (doneTrying) {
+                this._disconnectSignals();
+                await this._handlePendingMessages();
                 this._cancelAndReset();
             } else {
-                const cancellable = this._cancellable;
-                let signalId = this.connect('no-more-messages', () => {
-                    this.disconnect(signalId);
-                    if (!cancellable.is_cancelled())
-                        this._cancelAndReset();
-                });
+                await this._handlePendingMessages();
+                this._retry(serviceName);
             }
+        } catch (e) {
+            if (!e.matches(Gio.IOErrorEnum, Gio.IOErrorEnum.CANCELLED))
+                logError(e);
         }
+    }
 
-        this.emit('verification-failed', serviceName, !doneTrying);
+    _handlePendingMessages() {
+        if (!this.hasPendingMessage)
+            return Promise.resolve();
 
-        if (!this.hasPendingMessages) {
-            this._retry(serviceName);
-        } else {
-            const cancellable = this._cancellable;
+        const cancellable = this._cancellable;
+        return new Promise((resolve, reject) => {
             let signalId = this.connect('no-more-messages', () => {
                 this.disconnect(signalId);
-                if (!cancellable.is_cancelled())
-                    this._retry(serviceName);
+                if (cancellable.is_cancelled())
+                    reject(new GLib.Error(Gio.IOErrorEnum, Gio.IOErrorEnum.CANCELLED, 'Operation was cancelled'));
+                else
+                    resolve();
             });
-        }
+        });
     }
 
     _onServiceUnavailable(_client, serviceName, errorMessage) {
@@ -783,4 +782,3 @@ var ShellUserVerifier = class {
         this._verificationFailed(serviceName, true);
     }
 };
-Signals.addSignalMethods(ShellUserVerifier.prototype);

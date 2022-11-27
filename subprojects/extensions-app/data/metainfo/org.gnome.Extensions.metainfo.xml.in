@@ -39,10 +39,9 @@
   </description>
 
   <releases>
-    <release version="42.0" date="2022-03-12">
-      <description>
-        <p>Use libadwaita for platform integration and consistency. Modernize look and feel.</p>
-      </description>
+    <release version="43.1" date="2022-10-22"/>
+    <release version="43.0" date="2022-09-17">
+      <p>Modernize About window</p>
     </release>
   </releases>
 

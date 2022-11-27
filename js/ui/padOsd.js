@@ -5,7 +5,7 @@ const {
     Atk, Clutter, GDesktopEnums, Gio,
     GLib, GObject, Gtk, Meta, Pango, Rsvg, St,
 } = imports.gi;
-const Signals = imports.signals;
+const Signals = imports.misc.signals;
 
 const Main = imports.ui.main;
 const PopupMenu = imports.ui.popupMenu;
@@ -485,23 +485,23 @@ var PadDiagram = GObject.registerClass({
         if (this._handle == null)
             return [false];
 
-        let leaderPos, leaderSize, pos;
-        let found, direction;
-
-        [found, pos] = this._handle.get_position_sub(`#${labelName}`);
-        if (!found)
+        const [labelFound, labelPos] = this._handle.get_position_sub(`#${labelName}`);
+        const [, labelSize] = this._handle.get_dimensions_sub(`#${labelName}`);
+        if (!labelFound)
             return [false];
 
-        [found, leaderPos] = this._handle.get_position_sub(`#${leaderName}`);
-        [found, leaderSize] = this._handle.get_dimensions_sub(`#${leaderName}`);
-        if (!found)
+        const [leaderFound, leaderPos] = this._handle.get_position_sub(`#${leaderName}`);
+        const [, leaderSize] = this._handle.get_dimensions_sub(`#${leaderName}`);
+        if (!leaderFound)
             return [false];
 
-        if (pos.x > leaderPos.x + leaderSize.width)
+        let direction;
+        if (labelPos.x > leaderPos.x + leaderSize.width)
             direction = LTR;
         else
             direction = RTL;
 
+        let pos = {x: labelPos.x, y: labelPos.y + labelSize.height};
         if (this.leftHanded) {
             direction = 1 - direction;
             pos.x = this._imageWidth - pos.x;
@@ -957,8 +957,10 @@ var PadOsd = GObject.registerClass({
 
 const PadOsdIface = loadInterfaceXML('org.gnome.Shell.Wacom.PadOsd');
 
-var PadOsdService = class {
+var PadOsdService = class extends Signals.EventEmitter {
     constructor() {
+        super();
+
         this._dbusImpl = Gio.DBusExportedObject.wrapJSObject(PadOsdIface, this);
         this._dbusImpl.export(Gio.DBus.session, '/org/gnome/Shell/Wacom');
         Gio.DBus.session.own_name('org.gnome.Shell.Wacom.PadOsd', Gio.BusNameOwnerFlags.REPLACE, null, null);
@@ -987,4 +989,3 @@ var PadOsdService = class {
         invocation.return_value(null);
     }
 };
-Signals.addSignalMethods(PadOsdService.prototype);
