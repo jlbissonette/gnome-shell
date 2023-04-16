@@ -349,7 +349,6 @@ var Dash = GObject.registerClass({
         this._showAppsIcon.icon.setIconSize(this.iconSize);
         this._hookUpLabel(this._showAppsIcon);
         //Move the show apps icon to the top of the dash// 
-        this._dashContainer.remove_child(this._showAppsIcon);
         this._dashContainer.insert_child_at_index(this._showAppsIcon,0);
 
         this.showAppsButton = this._showAppsIcon.toggleButton;
