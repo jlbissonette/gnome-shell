@@ -331,7 +331,7 @@ var Dash = GObject.registerClass({
         });
 
         this._dashContainer = new St.BoxLayout({
-            x_align: Clutter.ActorAlign.CENTER,
+            x_align: Clutter.ActorAlign.START,
             y_expand: true,
         });
 
@@ -355,6 +355,7 @@ var Dash = GObject.registerClass({
 
         this._background = new St.Widget({
             style_class: 'dash-background',
+            
         });
 
         const sizerBox = new Clutter.Actor();
