@@ -97,11 +97,10 @@ $app_icon_size: 96px;
 
 // Running app indicator (also shown in dash)
 .app-well-app-running-dot {
-  height: 5px;
-  width: 5px;
-  border-radius:5px;
-  margin-bottom: 8px;
-  background-color: $system_fg_color;
+  height: 58px;
+  width: 58px;
+  border: radius 4px;
+  background-color: rgba(8, 8, 8, 0.349);
 }
 
 // Rename popup for app folders
