@@ -92,9 +92,9 @@ const _modes = {
         unlockDialog: imports.ui.unlockDialog.UnlockDialog,
         components: USER_SESSION_COMPONENTS,
         panel: {
-            left: ['activities', 'appMenu'],
-            center: ['dateMenu'],
-            right: ['screenRecording', 'screenSharing', 'dwellClick', 'a11y', 'keyboard', 'quickSettings'],
+            left: [],
+            center: [],
+            right: ['screenRecording', 'screenSharing', 'dwellClick', 'a11y', 'dateMenu', 'keyboard', 'dateMenu', 'quickSettings'],
         },
     },
 };
